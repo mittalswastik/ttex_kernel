@@ -14,15 +14,13 @@
 
 static struct kprobe kp;
 
-#define PARENT_ID _IOW('S',2,int32_t) // start the timer
+#define PARENT_ID _IOW('P',2,int32_t) // start the timer
 #define START_TIMER _IOW('S',2,int32_t) // start the timer
 #define MOD_TIMER _IOW('U',3,int32_t) // modify the timer
 #define DEL_TIMER _IOW('D',3,int32_t) // delete the timer
 
 int32_t value = 0;
 int32_t parent_id = 0;
-
-timer_t
  
 dev_t dev = 0;
 static struct class *dev_class;
@@ -52,7 +50,7 @@ struct timer_list *thread_timers[20];
 bool timer_set[20];
 
 void timer_callback(struct timer_list* data){
-        kmp_printf("timer_callback\n");
+        printk(KERN_INFO "timer_callback\n");
 }
 
 /*
@@ -90,9 +88,11 @@ static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, 
 
 static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+         int32_t timer_id;
+
          switch(cmd) {
                 case PARENT_ID:
-                        if( copy_from_user(&parent_id ,(int32_t*) arg, sizeof(value)) )
+                        if( copy_from_user(&parent_id ,(int32_t*) arg, sizeof(parent_id)) )
                         {
                                 pr_err("Data Write : Err!\n");
                         }
@@ -104,8 +104,9 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("Data Write : Err!\n");
                         }
                         pr_info("Value = %d\n", value);
-                        timer_setup(&thread_timers[value-parent], timer_callback, 0);
-                        timer_set[value-parent] = true;
+                        timer_id = value-parent_id;
+                        timer_setup(thread_timers[timer_id], timer_callback, 0);
+                        timer_set[timer_id] = true;
                         break;
                 case MOD_TIMER:
                         if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
@@ -113,14 +114,14 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("Data Read : Err!\n");
                         }
 
-                        int32_t timer_id = value-parent_id;
+                        timer_id = value-parent_id;
                         break;
                 case DEL_TIMER:
                         if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
                         {
                                 pr_err("Data Read : Err!\n");
                         }
-                        int32_t timer_id = value-parent_id;
+                        timer_id = value-parent_id;
                         del_timer(thread_timers[timer_id]);
                         timer_set[timer_id] = false;
                         break;
@@ -141,7 +142,7 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs)
     
 
     if(pre_task->rt_priority == 10){
-        kmp_printf("task context switching out\n");
+        printk(KERN_INFO "task context switching out\n");
     }
 
     /* Print a message to the kernel log */
@@ -163,10 +164,10 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
 /* Module initialization function */
 static int __init ttex_kernel_init(void)
 {
-    int ret;
+    int ret, i;
 
-    for(int i = 0 ; i < 20 ; i++) {
-        timer_set = false;
+    for(i = 0 ; i < 20 ; i++) {
+        timer_set[i] = false;
     }
 
     /* Initialize the kprobe structure */

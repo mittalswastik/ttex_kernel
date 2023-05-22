@@ -31,7 +31,7 @@ static ompt_enumerate_states_t ompt_enumerate_states;
 #define START_TIMER _IOW('S',2,int) // start the timer
 #define MOD_TIMER _IOW('U',3,int) // modify the timer
 #define DEL_TIMER _IOW('D',3,int) // delete the timer
-#define PARENT_ID _IOW('S',2,int) // start the timer
+#define PARENT_ID _IOW('P',2,int) // start the timer
 
 struct sigevent timer_event;
 typedef struct timespec timespec;
