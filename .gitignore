@@ -1,0 +1,13 @@
+.ttex_kernel.ko.cmd
+        .ttex_kernel.mod.cmd
+        .ttex_kernel.mod.o.cmd
+        .ttex_kernel.o.cmd
+        .vscode/
+        Module.symvers
+        ext2
+        modules.order
+        ttex_kernel.ko
+        ttex_kernel.mod
+        ttex_kernel.mod.c
+        ttex_kernel.mod.o
+        ttex_kernel.o
