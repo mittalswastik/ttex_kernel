@@ -105,7 +105,7 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs)
     /* You can add your custom code here to execute before the original function */
 
     /* Print a message to the kernel log */
-    pr_info("Pre-handler: context_switch function intercepted!\n");
+   // pr_info("Pre-handler: context_switch function intercepted!\n");
 
     /* Return 0 to indicate success */
     return 0;
@@ -117,7 +117,7 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
     /* You can add your custom code here to execute after the original function */
 
     /* Print a message to the kernel log */
-    pr_info("Post-handler: context_switch function intercepted!\n");
+   // pr_info("Post-handler: context_switch function intercepted!\n");
 }
 
 /* Module initialization function */

@@ -1,0 +1,310 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <inttypes.h>
+#include <omp.h>
+#include <omp-tools.h>
+#include <execinfo.h>
+#include <assert.h>
+#include <pthread.h>
+#include <sys/resource.h>
+#include <bits/stdc++.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+using namespace std;
+
+uint64_t global_id = 0;
+
+//pthread_mutex_t lock_t;
+
+static ompt_get_thread_data_t ompt_get_thread_data;
+static ompt_get_unique_id_t ompt_get_unique_id;
+static ompt_enumerate_states_t ompt_enumerate_states;
+
+#define WR_VALUE _IOW('S',2,int) // start the timer
+#define WR_VALUE _IOW('U',3,int) // modify the timer
+#define WR_VALUE _IOW('D',3,int) // delete the timer
+
+struct sigevent timer_event;
+typedef struct timespec timespec;
+timespec start_time, end_time;
+
+timespec max_timeout; // on callback work end thread can sleep or work but unknown so no time noted
+
+typedef struct timeout_node {
+  int parallel_region_id;
+  int sub_region_id;
+  int sections_id;
+  timespec wcet;
+  timespec et; // actual time taken
+} timeout_node;
+
+typedef struct details{ 
+  int ref; // -2 means omp for and >0 means omp section and -1 means single
+  int loop_split_factor; // or the maxvul value
+  vector< vector<timeout_node> > expected_execution;
+} details;
+
+details **parallel_region;
+
+typedef struct thread_info {
+  int id;
+  vector<int> timeout_node_id;
+  vector<timeout_node> thread_current_timeout;
+  timer_t thread_timer_id;
+  struct itimerspec thread_timer;
+  struct sigevent timer_event;
+  struct sigaction sa;
+} thread_info;
+
+extern "C" int my_next_id() // to assign unique id's to thread (openmp might assign an id of finished thread to another)
+{
+  static uint64_t ID=0;
+  int ret = (int) __sync_fetch_and_add(&ID,1);
+  //assert(ret<MAX_THREADS && "Maximum number of allowed threads is limited by MAX_THREADS");
+  return ret;
+}
+
+timespec getRegionElapsedTime(timespec start, timespec stop)
+{
+  timespec elapsed_time;
+  if ((stop.tv_nsec - start.tv_nsec) < 0) 
+  {
+    elapsed_time.tv_sec = stop.tv_sec - start.tv_sec - 1;
+    elapsed_time.tv_nsec = stop.tv_nsec - start.tv_nsec + 1000000000;
+  } 
+  else 
+  {
+    elapsed_time.tv_sec = stop.tv_sec - start.tv_sec;
+    elapsed_time.tv_nsec = stop.tv_nsec - start.tv_nsec;
+  }
+  return elapsed_time;
+}
+
+timespec timespec_normalise(timespec ts)
+{
+  while(ts.tv_nsec >= NSEC_PER_SEC)
+  {
+    ++(ts.tv_sec);
+    ts.tv_nsec -= NSEC_PER_SEC;
+  }
+  
+  while(ts.tv_nsec <= -NSEC_PER_SEC)
+  {
+    --(ts.tv_sec);
+    ts.tv_nsec += NSEC_PER_SEC;
+  }
+  
+  if(ts.tv_nsec < 0 && ts.tv_sec > 0)
+  {
+    /* Negative nanoseconds while seconds is positive.
+     * Decrement tv_sec and roll tv_nsec over.
+    */
+    
+    --(ts.tv_sec);
+    ts.tv_nsec = NSEC_PER_SEC - (-1 * ts.tv_nsec);
+  }
+  else if(ts.tv_nsec > 0 && ts.tv_sec < 0)
+  {
+    /* Positive nanoseconds while seconds is negative.
+     * Increment tv_sec and roll tv_nsec over.
+    */
+    
+    ++(ts.tv_sec);
+    ts.tv_nsec = -NSEC_PER_SEC - (-1 * ts.tv_nsec);
+  }
+  
+  return ts;
+}
+
+timespec timespec_add(timespec ts1, timespec ts2)
+{
+  /* Normalise inputs to prevent tv_nsec rollover if whole-second values
+   * are packed in it.
+  */
+  ts1 = timespec_normalise(ts1);
+  ts2 = timespec_normalise(ts2);
+  
+  ts1.tv_sec  += ts2.tv_sec;
+  ts1.tv_nsec += ts2.tv_nsec;
+  
+  return timespec_normalise(ts1);
+}
+
+timespec timespec_sub(timespec ts1, timespec ts2)
+{
+  /* Normalise inputs to prevent tv_nsec rollover if whole-second values
+   * are packed in it.
+  */
+  ts1 = timespec_normalise(ts1);
+  ts2 = timespec_normalise(ts2);
+  
+  ts1.tv_sec  -= ts2.tv_sec;
+  ts1.tv_nsec -= ts2.tv_nsec;
+  
+  return timespec_normalise(ts1);
+}
+
+extern "C" void
+ompt_test ()
+{
+  printf("Recording an iteration\n");
+  // get parallel id here
+}
+
+////////////////////////////////////////////////////////////////////////
+
+// static void countCounter (thread_data *ptr)
+// {
+//   __sync_add_and_fetch(&(ptr->node->counter),1);
+// }
+
+////////////////////////////////////////////////////////////////////////
+
+
+extern "C"  void
+on_ompt_callback_thread_begin(
+  ompt_thread_t thread_type,
+  ompt_data_t *thread_data)
+{
+    int fd;
+
+    pthread_t thread;
+    pthread_attr_t attr;
+    struct sched_param param;
+
+    // Initialize thread attributes
+    pthread_attr_init(&attr);
+
+    // Set thread attributes to make it a real-time thread
+    pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+
+    // Set the desired priority for the thread
+    param.sched_priority = 10;
+    pthread_attr_setschedparam(&attr, &param);
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+  
+    // printf("----------------------- thread begin ---------------------\n");
+    fd = open("/dev/etx_device", O_RDWR);
+    if(fd < 0) {
+        printf("Cannot open device file...\n");
+        return;
+    }  
+
+
+
+    // thread_data->value = my_next_id();
+    thread_info* temp_thread_data = (thread_info*) malloc(sizeof(thread_info));
+    temp_thread_data->id = my_next_id();
+
+    ioctl(fd, WR_VALUE, a);
+}
+
+
+extern "C" void
+on_ompt_callback_parallel_begin(
+  ompt_data_t *encountering_task_data,
+  const ompt_frame_t *encountering_task_frame,
+  ompt_data_t *parallel_data,
+  unsigned int requested_parallelism,
+  int flags,
+  const void *codeptr_ra,
+  unsigned int id)
+{
+  printf("-------- end of parallel begin -----------\n");
+}
+
+extern "C"  void
+on_ompt_callback_work(
+  ompt_work_t wstype,
+    ompt_scope_endpoint_t endpoint,
+    ompt_data_t *parallel_data,
+    ompt_data_t *task_data,
+    uint64_t count,
+    const void *codeptr_ra,
+    unsigned int sub_parallel_id)
+{
+
+  ompt_data_t *current_thread = ompt_get_thread_data();
+  thread_info* temp_thread_data = (thread_info*) current_thread->ptr;
+}
+
+
+extern "C"  void
+on_ompt_callback_parallel_end(
+  ompt_data_t *parallel_data,
+  ompt_data_t *encountering_task_data,
+  int flags,
+  const void *codeptr_ra)
+{
+  ompt_data_t *current_thread = ompt_get_thread_data();
+}
+
+extern "C"  void
+on_ompt_callback_thread_end(
+  ompt_data_t *thread_data)
+{
+    // execute del timer here given system id has to be sent
+}
+
+#define register_callback_t(name, type)                       \
+do{                                                           \
+  type f_##name = &on_##name;                                 \
+  if (ompt_set_callback(name, (ompt_callback_t)f_##name) ==   \
+      ompt_set_never)                                         \
+    printf("0: Could not register callback '" #name "'\n");   \
+}while(0)
+
+#define register_callback(name) register_callback_t(name, name##_t)
+
+extern "C" int ompt_initialize(
+  ompt_function_lookup_t lookup,
+  int initial_device_num,
+  ompt_data_t *tool_data)
+{
+  // printf("@@@@@@@@@@@@@@@@@@@@@@@@@@@@ %d\n", parallel_region[2][0].parallel_id);
+
+  ompt_set_callback_t ompt_set_callback = (ompt_set_callback_t) lookup("ompt_set_callback");
+  ompt_get_thread_data = (ompt_get_thread_data_t) lookup("ompt_get_thread_data");
+  ompt_get_unique_id = (ompt_get_unique_id_t) lookup("ompt_get_unique_id");
+  ompt_enumerate_states = (ompt_enumerate_states_t) lookup("ompt_enumerate_states");
+
+  register_callback(ompt_callback_parallel_begin);
+  register_callback(ompt_callback_parallel_end);
+  register_callback(ompt_callback_thread_begin);
+  register_callback(ompt_callback_thread_end);
+  register_callback(ompt_callback_work);
+
+  bool flag = false;
+
+  if(flag){
+    ompt_test();
+  }
+
+  createTimer();
+
+  // pthread_mutex_init(&lock_t,NULL);
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+  printf("Checking intial\n");
+  return 1; //success
+}
+
+extern "C" void ompt_finalize(ompt_data_t* data)
+{
+  printf("Checking final\n");
+}
+
+extern "C" ompt_start_tool_result_t* ompt_start_tool(
+  unsigned int omp_version,
+  const char *runtime_version)
+{
+  static ompt_start_tool_result_t ompt_start_tool_result = {&ompt_initialize,&ompt_finalize,{.ptr=NULL}};
+  return &ompt_start_tool_result;
+}
