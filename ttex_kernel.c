@@ -21,6 +21,8 @@ static struct kprobe kp;
 
 int32_t value = 0;
 int32_t parent_id = 0;
+
+timer_t
  
 dev_t dev = 0;
 static struct class *dev_class;
@@ -45,6 +47,14 @@ static struct file_operations fops =
         .unlocked_ioctl = etx_ioctl,
         .release        = etx_release,
 };
+
+struct timer_list *thread_timers[20];
+bool timer_set[20];
+
+void timer_callback(struct timer_list* data){
+
+}
+
 /*
 ** This function will be called when we open the Device file
 */
@@ -89,11 +99,13 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         pr_info("Value = %d\n", parent_id);
                         break;
                 case START_TIMER:
-                        if( copy_from_user(&parent_id ,(int32_t*) arg, sizeof(value)) )
+                        if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
                         {
                                 pr_err("Data Write : Err!\n");
                         }
-                        pr_info("Value = %d\n", parent_id);
+                        pr_info("Value = %d\n", value);
+                        timer_setup(&thread_timers[value-parent], timer_callback, 0);
+                        timer_set[value-parent] = true;
                         break;
                 case MOD_TIMER:
                         if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
@@ -110,6 +122,7 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("Data Read : Err!\n");
                         }
                         int32_t timer_id = value-parent_id;
+                        del_timer();
                         break;
                 default:
                         pr_info("Default\n");
@@ -122,6 +135,14 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 static int pre_handler(struct kprobe *p, struct pt_regs *regs)
 {
     /* You can add your custom code here to execute before the original function */
+
+    struct task_struct *pre_task = regs->di;
+    struct task_struct *post_task = regs->si;
+    
+
+    if(pre_task->rt_priority == 10){
+
+    }
 
     /* Print a message to the kernel log */
    // pr_info("Pre-handler: context_switch function intercepted!\n");
@@ -143,6 +164,10 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
 static int __init ttex_kernel_init(void)
 {
     int ret;
+
+    for(int i = 0 ; i < 20 ; i++) {
+        timer_set = false;
+    }
 
     /* Initialize the kprobe structure */
     kp.pre_handler = pre_handler;

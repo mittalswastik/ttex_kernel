@@ -189,11 +189,15 @@ on_ompt_callback_thread_begin(
   
     // printf("----------------------- thread begin ---------------------\n");
     int fd = open("/dev/etx_device", O_RDWR);
-   temp_thread_data->fd = fd;
+    temp_thread_data->fd = fd;
     if(temp_thread_data->fd < 0) {
         printf("Cannot open device file...\n");
         return;
-    }  
+    }
+
+    if(omp_get_thread_num == 0){
+      ioctl(temp_thread_data->fd, PARENT_ID, id);
+    }
 
 
 
