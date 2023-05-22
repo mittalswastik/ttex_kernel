@@ -14,10 +14,10 @@
 
 static struct kprobe kp;
 
-#define PARENT_ID _IOW('S',2,int) // start the timer
-#define START_TIMER _IOW('S',2,int) // start the timer
-#define MOD_TIMER _IOW('U',3,int) // modify the timer
-#define DEL_TIMER _IOW('D',3,int) // delete the timer
+#define PARENT_ID _IOW('S',2,int32_t) // start the timer
+#define START_TIMER _IOW('S',2,int32_t) // start the timer
+#define MOD_TIMER _IOW('U',3,int32_t) // modify the timer
+#define DEL_TIMER _IOW('D',3,int32_t) // delete the timer
 
 int32_t value = 0;
 int32_t parent_id = 0;
@@ -52,7 +52,7 @@ struct timer_list *thread_timers[20];
 bool timer_set[20];
 
 void timer_callback(struct timer_list* data){
-
+        kmp_printf("timer_callback\n");
 }
 
 /*
@@ -114,7 +114,6 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         }
 
                         int32_t timer_id = value-parent_id;
-
                         break;
                 case DEL_TIMER:
                         if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
@@ -122,7 +121,8 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("Data Read : Err!\n");
                         }
                         int32_t timer_id = value-parent_id;
-                        del_timer();
+                        del_timer(thread_timers[timer_id]);
+                        timer_set[timer_id] = false;
                         break;
                 default:
                         pr_info("Default\n");
@@ -141,7 +141,7 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs)
     
 
     if(pre_task->rt_priority == 10){
-
+        kmp_printf("task context switching out\n");
     }
 
     /* Print a message to the kernel log */
