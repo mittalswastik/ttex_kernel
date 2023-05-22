@@ -14,11 +14,13 @@
 
 static struct kprobe kp;
 
-#define WR_VALUE _IOR('S',2,int) // start the timer
-#define WR_VALUE _IOR('U',3,int) // modify the timer
-#define WR_VALUE _IOR('D',3,int) // delete the timer
+#define PARENT_ID _IOW('S',2,int) // start the timer
+#define START_TIMER _IOW('S',2,int) // start the timer
+#define MOD_TIMER _IOW('U',3,int) // modify the timer
+#define DEL_TIMER _IOW('D',3,int) // delete the timer
 
 int32_t value = 0;
+int32_t parent_id = 0;
  
 dev_t dev = 0;
 static struct class *dev_class;
@@ -79,19 +81,36 @@ static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, 
 static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
          switch(cmd) {
-                case WR_VALUE:
-                        if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
+                case PARENT_ID:
+                        if( copy_from_user(&parent_id ,(int32_t*) arg, sizeof(value)) )
                         {
                                 pr_err("Data Write : Err!\n");
                         }
-                        pr_info("Value = %d\n", value);
+                        pr_info("Value = %d\n", parent_id);
                         break;
-                // case RD_VALUE:
-                //         if( copy_to_user((int32_t*) arg, &value, sizeof(value)) )
-                //         {
-                //                 pr_err("Data Read : Err!\n");
-                //         }
-                //         break;
+                case START_TIMER:
+                        if( copy_from_user(&parent_id ,(int32_t*) arg, sizeof(value)) )
+                        {
+                                pr_err("Data Write : Err!\n");
+                        }
+                        pr_info("Value = %d\n", parent_id);
+                        break;
+                case MOD_TIMER:
+                        if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
+                        {
+                                pr_err("Data Read : Err!\n");
+                        }
+
+                        int32_t timer_id = value-parent_id;
+
+                        break;
+                case DEL_TIMER:
+                        if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
+                        {
+                                pr_err("Data Read : Err!\n");
+                        }
+                        int32_t timer_id = value-parent_id;
+                        break;
                 default:
                         pr_info("Default\n");
                         break;

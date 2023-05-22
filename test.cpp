@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include "profiler.h"
 
 using namespace std;
 
@@ -17,19 +18,37 @@ void test(int b){
         int i, j = 0, a;
         
         #pragma omp for schedule(static)
-            for(i=0 ; i<b ; i++){
-                a = 2*i;
+            for(i=0 ; i<20 ; i++){
+                for(int j=0 ; j<100 ; j++){
+                    a = 2*i;
+                }
+
+                ompt_test();
             }
     }
 }
 
 int main(int argc, char** argv){
 
-    int a;
+    // int a;
 
-    cin>>a;
+    // cin>>a;
 
-    test(a);
+    // test(a);
+
+     #pragma omp parallel
+    {
+        int i, j = 0, a;
+        
+        #pragma omp for schedule(static)
+            for(i=0 ; i<20 ; i++){
+                for(int j=0 ; j<100 ; j++){
+                    a = 2*i;
+                }
+
+                ompt_test();
+            }
+    }
 
     return 0;
 }

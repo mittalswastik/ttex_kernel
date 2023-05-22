@@ -12,6 +12,7 @@
 #include <signal.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 
 using namespace std;
 
@@ -19,13 +20,18 @@ uint64_t global_id = 0;
 
 //pthread_mutex_t lock_t;
 
+#define MAX_SPLIT 100000000
+#define PERIOD_IN_NANOS (100UL * 1000000UL)
+#define NSEC_PER_SEC 1000000000
+
 static ompt_get_thread_data_t ompt_get_thread_data;
 static ompt_get_unique_id_t ompt_get_unique_id;
 static ompt_enumerate_states_t ompt_enumerate_states;
 
-#define WR_VALUE _IOW('S',2,int) // start the timer
-#define WR_VALUE _IOW('U',3,int) // modify the timer
-#define WR_VALUE _IOW('D',3,int) // delete the timer
+#define START_TIMER _IOW('S',2,int) // start the timer
+#define MOD_TIMER _IOW('U',3,int) // modify the timer
+#define DEL_TIMER _IOW('D',3,int) // delete the timer
+#define PARENT_ID _IOW('S',2,int) // start the timer
 
 struct sigevent timer_event;
 typedef struct timespec timespec;
@@ -33,30 +39,9 @@ timespec start_time, end_time;
 
 timespec max_timeout; // on callback work end thread can sleep or work but unknown so no time noted
 
-typedef struct timeout_node {
-  int parallel_region_id;
-  int sub_region_id;
-  int sections_id;
-  timespec wcet;
-  timespec et; // actual time taken
-} timeout_node;
-
-typedef struct details{ 
-  int ref; // -2 means omp for and >0 means omp section and -1 means single
-  int loop_split_factor; // or the maxvul value
-  vector< vector<timeout_node> > expected_execution;
-} details;
-
-details **parallel_region;
-
 typedef struct thread_info {
   int id;
-  vector<int> timeout_node_id;
-  vector<timeout_node> thread_current_timeout;
-  timer_t thread_timer_id;
-  struct itimerspec thread_timer;
-  struct sigevent timer_event;
-  struct sigaction sa;
+  int fd;
 } thread_info;
 
 extern "C" int my_next_id() // to assign unique id's to thread (openmp might assign an id of finished thread to another)
@@ -152,6 +137,11 @@ ompt_test ()
 {
   printf("Recording an iteration\n");
   // get parallel id here
+  ompt_data_t *current_thread = ompt_get_thread_data();
+  thread_info* temp_thread_data = (thread_info*) current_thread->ptr;
+
+  int32_t id = syscall(__NR_gettid);
+  ioctl(temp_thread_data->fd, MOD_TIMER, id);
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -169,7 +159,12 @@ on_ompt_callback_thread_begin(
   ompt_thread_t thread_type,
   ompt_data_t *thread_data)
 {
-    int fd;
+    //int fd;
+    int core_id;
+
+    core_id = my_next_id()%6;
+
+    printf("core used is : %d\n",core_id);
 
     pthread_t thread;
     pthread_attr_t attr;
@@ -189,10 +184,13 @@ on_ompt_callback_thread_begin(
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(core_id, &cpuset);
+
+    thread_info* temp_thread_data = (thread_info*) malloc(sizeof(thread_info));
   
     // printf("----------------------- thread begin ---------------------\n");
-    fd = open("/dev/etx_device", O_RDWR);
-    if(fd < 0) {
+    int fd = open("/dev/etx_device", O_RDWR);
+   temp_thread_data->fd = fd;
+    if(temp_thread_data->fd < 0) {
         printf("Cannot open device file...\n");
         return;
     }  
@@ -200,10 +198,8 @@ on_ompt_callback_thread_begin(
 
 
     // thread_data->value = my_next_id();
-    thread_info* temp_thread_data = (thread_info*) malloc(sizeof(thread_info));
-    temp_thread_data->id = my_next_id();
-
-    ioctl(fd, WR_VALUE, a);
+    int32_t id = syscall(__NR_gettid);
+    ioctl(temp_thread_data->fd, START_TIMER, id);
 }
 
 
@@ -250,6 +246,11 @@ extern "C"  void
 on_ompt_callback_thread_end(
   ompt_data_t *thread_data)
 {
+    ompt_data_t *current_thread = ompt_get_thread_data();
+    thread_info* temp_thread_data = (thread_info*) current_thread->ptr;
+
+    int32_t id = syscall(__NR_gettid);
+    ioctl(temp_thread_data->fd, DEL_TIMER, id);
     // execute del timer here given system id has to be sent
 }
 
@@ -286,11 +287,6 @@ extern "C" int ompt_initialize(
   if(flag){
     ompt_test();
   }
-
-  createTimer();
-
-  // pthread_mutex_init(&lock_t,NULL);
-  clock_gettime(CLOCK_MONOTONIC, &start_time);
 
   printf("Checking intial\n");
   return 1; //success
