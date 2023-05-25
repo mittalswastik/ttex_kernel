@@ -28,10 +28,10 @@ static ompt_get_thread_data_t ompt_get_thread_data;
 static ompt_get_unique_id_t ompt_get_unique_id;
 static ompt_enumerate_states_t ompt_enumerate_states;
 
-#define START_TIMER _IOW('S',2,int) // start the timer
-#define MOD_TIMER _IOW('U',3,int) // modify the timer
-#define DEL_TIMER _IOW('D',3,int) // delete the timer
-#define PARENT_ID _IOW('P',2,int) // start the timer
+#define START_TIMER _IOW('S',2,int32_t*) // start the timer
+#define MOD_TIMER _IOW('U',3,int32_t*) // modify the timer
+#define DEL_TIMER _IOW('D',3,int32_t*) // delete the timer
+#define PARENT_ID _IOW('P',2,int32_t*) // start the timer
 
 struct sigevent timer_event;
 typedef struct timespec timespec;
@@ -141,7 +141,7 @@ ompt_test ()
   thread_info* temp_thread_data = (thread_info*) current_thread->ptr;
 
   int32_t id = syscall(__NR_gettid);
-  ioctl(temp_thread_data->fd, MOD_TIMER, id);
+  ioctl(temp_thread_data->fd, MOD_TIMER, &id);
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -195,15 +195,14 @@ on_ompt_callback_thread_begin(
         return;
     }
 
+    int32_t id = syscall(__NR_gettid);
+
     if(omp_get_thread_num == 0){
-      ioctl(temp_thread_data->fd, PARENT_ID, id);
+      ioctl(temp_thread_data->fd, PARENT_ID, &id);
     }
 
-
-
     // thread_data->value = my_next_id();
-    int32_t id = syscall(__NR_gettid);
-    ioctl(temp_thread_data->fd, START_TIMER, id);
+    ioctl(temp_thread_data->fd, START_TIMER, &id);
 }
 
 
@@ -254,7 +253,7 @@ on_ompt_callback_thread_end(
     thread_info* temp_thread_data = (thread_info*) current_thread->ptr;
 
     int32_t id = syscall(__NR_gettid);
-    ioctl(temp_thread_data->fd, DEL_TIMER, id);
+    ioctl(temp_thread_data->fd, DEL_TIMER, &id);
     // execute del timer here given system id has to be sent
 }
 

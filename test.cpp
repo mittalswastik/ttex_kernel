@@ -11,8 +11,6 @@ using namespace std;
 void test(int b){
     int fd;
 
-    
-
     #pragma omp parallel
     {
         int i, j = 0, a;
@@ -36,7 +34,7 @@ int main(int argc, char** argv){
 
     // test(a);
 
-     #pragma omp parallel
+    #pragma omp parallel
     {
         int i, j = 0, a;
         

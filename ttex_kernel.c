@@ -11,13 +11,14 @@
 #include <linux/err.h>
 #include <linux/kprobes.h>
 #include <linux/timer.h>
+#include <stdatomic.h>
 
 static struct kprobe kp;
 
-#define PARENT_ID _IOW('P',2,int32_t) // start the timer
-#define START_TIMER _IOW('S',2,int32_t) // start the timer
-#define MOD_TIMER _IOW('U',3,int32_t) // modify the timer
-#define DEL_TIMER _IOW('D',3,int32_t) // delete the timer
+#define PARENT_ID _IOW('P',2,int32_t*) // start the timer
+#define START_TIMER _IOW('S',2,int32_t*) // start the timer
+#define MOD_TIMER _IOW('U',3,int32_t*) // modify the timer
+#define DEL_TIMER _IOW('D',3,int32_t*) // delete the timer
 
 int32_t value = 0;
 int32_t parent_id = 0;
@@ -47,7 +48,8 @@ static struct file_operations fops =
 };
 
 struct timer_list *thread_timers[20];
-bool timer_set[20];
+atomic_bool timer_set[20];
+atomic_bool modified_timer[20];
 
 void timer_callback(struct timer_list* data){
         printk(KERN_INFO "timer_callback\n");
@@ -96,25 +98,26 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         {
                                 pr_err("Data Write : Err!\n");
                         }
-                        pr_info("Value = %d\n", parent_id);
+                        pr_info("Parent Value = %d\n", parent_id);
                         break;
                 case START_TIMER:
                         if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
                         {
                                 pr_err("Data Write : Err!\n");
                         }
-                        pr_info("Value = %d\n", value);
+                        pr_info("Start Timer = %d\n", value);
                         timer_id = value-parent_id;
                         timer_setup(thread_timers[timer_id], timer_callback, 0);
-                        timer_set[timer_id] = true;
+                        __atomic_store_n(&timer_set[timer_id],1,__ATOMIC_RELAXED);
+                        pr_info("Timer Started\n");
                         break;
                 case MOD_TIMER:
                         if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
                         {
                                 pr_err("Data Read : Err!\n");
                         }
-
                         timer_id = value-parent_id;
+                        __atomic_store_n(&modified_timer[timer_id], 1,__ATOMIC_RELAXED);
                         break;
                 case DEL_TIMER:
                         if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
@@ -123,7 +126,7 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         }
                         timer_id = value-parent_id;
                         del_timer(thread_timers[timer_id]);
-                        timer_set[timer_id] = false;
+                        __atomic_store_n(&timer_set[timer_id],0,__ATOMIC_RELAXED);
                         break;
                 default:
                         pr_info("Default\n");
@@ -139,14 +142,15 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs)
 
     struct task_struct *pre_task = regs->di;
     struct task_struct *post_task = regs->si;
-    
-
-    if(pre_task->rt_priority == 10){
-        printk(KERN_INFO "task context switching out\n");
-    }
 
     /* Print a message to the kernel log */
    // pr_info("Pre-handler: context_switch function intercepted!\n");
+
+   if(__atomic_load_n(&timer_set[pre_task->pid - parent_id], __ATOMIC_RELAXED)){
+        __atomic_store_n(&timer_set[pre_task->pid - parent_id],0,__ATOMIC_RELAXED);
+        // store timers expiry time here
+        del_timer(thread_timers[pre_task->pid - parent_id]);
+   }
 
     /* Return 0 to indicate success */
     return 0;
@@ -156,6 +160,21 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs)
 static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long flags)
 {
     /* You can add your custom code here to execute after the original function */
+
+        struct task_struct *pre_task = regs->di;
+        struct task_struct *post_task = regs->si;
+
+        if(post_task->rt_priority == 10){ // this will be updated to check task policy or something else as task can have any priority
+                //printk(KERN_INFO "task context switching out\n");
+                if(__atomic_load_n(&modified_timer[pre_task->pid - parent_id], __ATOMIC_RELAXED)){
+                        // restart the timer
+                        if(timer_pending(thread_timers[post_task->pid - parent_id])){
+                                __atomic_store_n(&modified_timer[post_task->pid - parent_id],0,__ATOMIC_RELAXED);
+                                del_timer(thread_timers[post_task->pid - parent_id]);
+                                mod_timer(thread_timers[post_task->pid - parent_id], jiffies + msecs_to_jiffies(10000));
+                        }
+                }
+        }
 
     /* Print a message to the kernel log */
    // pr_info("Post-handler: context_switch function intercepted!\n");
@@ -167,7 +186,8 @@ static int __init ttex_kernel_init(void)
     int ret, i;
 
     for(i = 0 ; i < 20 ; i++) {
-        timer_set[i] = false;
+        __atomic_store_n(&timer_set[i],0,__ATOMIC_RELAXED);
+        __atomic_store_n(&modified_timer[i], 0, __ATOMIC_RELAXED);
     }
 
     /* Initialize the kprobe structure */
@@ -203,7 +223,7 @@ static int __init ttex_kernel_init(void)
     }
 
     /*Creating struct class*/
-    if(IS_ERR(dev_class = class_create(THIS_MODULE,"etx_class"))){
+    if(IS_ERR(dev_class = class_create(THIS_MODULE,"etx"))){
         pr_err("Cannot create the struct class\n");
         goto r_class;
     }
