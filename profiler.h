@@ -141,7 +141,9 @@ ompt_test ()
   thread_info* temp_thread_data = (thread_info*) current_thread->ptr;
 
   int32_t id = syscall(__NR_gettid);
+  printf("modification thread id: %d\n", temp_thread_data->id);
   ioctl(temp_thread_data->fd, MOD_TIMER, &id);
+  printf("modification call made\n");
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -190,14 +192,18 @@ on_ompt_callback_thread_begin(
     // printf("----------------------- thread begin ---------------------\n");
     int fd = open("/dev/etx_device", O_RDWR);
     temp_thread_data->fd = fd;
+    temp_thread_data->id = syscall(__NR_gettid);
     if(temp_thread_data->fd < 0) {
         printf("Cannot open device file...\n");
         return;
     }
 
+    thread_data->ptr = temp_thread_data;  // storing the thread data such that accessible to all events
+
     int32_t id = syscall(__NR_gettid);
 
-    if(omp_get_thread_num == 0){
+    if(omp_get_thread_num() == 0){
+      //printf("is this getting executed?\n");
       ioctl(temp_thread_data->fd, PARENT_ID, &id);
     }
 
@@ -254,6 +260,7 @@ on_ompt_callback_thread_end(
 
     int32_t id = syscall(__NR_gettid);
     ioctl(temp_thread_data->fd, DEL_TIMER, &id);
+    close(temp_thread_data->fd); // closing the file descriptor here
     // execute del timer here given system id has to be sent
 }
 

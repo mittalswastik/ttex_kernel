@@ -34,7 +34,7 @@ int main(int argc, char** argv){
 
     // test(a);
 
-    #pragma omp parallel
+    #pragma omp parallel num_threads(4)
     {
         int i, j = 0, a;
         

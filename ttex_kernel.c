@@ -23,14 +23,14 @@ static struct kprobe kp;
 int32_t value = 0;
 int32_t parent_id = 0;
  
-dev_t dev = 0;
+dev_t dev;
 static struct class *dev_class;
 static struct cdev etx_cdev;
 /*
 ** Function Prototypes
 */
-static int      __init etx_driver_init(void);
-static void     __exit etx_driver_exit(void);
+static int      __init ttex_kernel_init(void);
+static void     __exit ttex_kernel_exit(void);
 static int      etx_open(struct inode *inode, struct file *file);
 static int      etx_release(struct inode *inode, struct file *file);
 static ssize_t  etx_read(struct file *filp, char __user *buf, size_t len,loff_t * off);
@@ -47,9 +47,9 @@ static struct file_operations fops =
         .release        = etx_release,
 };
 
-struct timer_list *thread_timers[20];
-atomic_bool timer_set[20];
-atomic_bool modified_timer[20];
+struct timer_list thread_timers[50];
+atomic_bool timer_set[50];
+atomic_bool modified_timer[50];
 
 void timer_callback(struct timer_list* data){
         printk(KERN_INFO "timer_callback\n");
@@ -90,7 +90,7 @@ static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, 
 
 static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-         int32_t timer_id;
+         int timer_id;
 
          switch(cmd) {
                 case PARENT_ID:
@@ -106,8 +106,10 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("Data Write : Err!\n");
                         }
                         pr_info("Start Timer = %d\n", value);
-                        timer_id = value-parent_id;
-                        timer_setup(thread_timers[timer_id], timer_callback, 0);
+                        timer_id = (int) value-parent_id;
+                        pr_info("timer id value is = %d\n", timer_id);
+                        timer_setup(&thread_timers[timer_id], timer_callback, 0);
+                        pr_info("timer has been setup \n");
                         __atomic_store_n(&timer_set[timer_id],1,__ATOMIC_RELAXED);
                         pr_info("Timer Started\n");
                         break;
@@ -116,7 +118,8 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         {
                                 pr_err("Data Read : Err!\n");
                         }
-                        timer_id = value-parent_id;
+                        timer_id = (int) value-parent_id;
+                        pr_info("modifying the timer for id %d\n", timer_id);
                         __atomic_store_n(&modified_timer[timer_id], 1,__ATOMIC_RELAXED);
                         break;
                 case DEL_TIMER:
@@ -124,8 +127,8 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         {
                                 pr_err("Data Read : Err!\n");
                         }
-                        timer_id = value-parent_id;
-                        del_timer(thread_timers[timer_id]);
+                        timer_id = (int) value-parent_id;
+                        del_timer(&thread_timers[timer_id]);
                         __atomic_store_n(&timer_set[timer_id],0,__ATOMIC_RELAXED);
                         break;
                 default:
@@ -146,11 +149,14 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs)
     /* Print a message to the kernel log */
    // pr_info("Pre-handler: context_switch function intercepted!\n");
 
-   if(__atomic_load_n(&timer_set[pre_task->pid - parent_id], __ATOMIC_RELAXED)){
-        __atomic_store_n(&timer_set[pre_task->pid - parent_id],0,__ATOMIC_RELAXED);
-        // store timers expiry time here
-        del_timer(thread_timers[pre_task->pid - parent_id]);
-   }
+//    if(pre_task->rt_priority == 10){
+//         int timer_id = (int) (pre_task->pid - parent_id);
+//         if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
+//                 __atomic_store_n(&timer_set[timer_id],0,__ATOMIC_RELAXED);
+//                 // store timers expiry time here
+//                 del_timer(&thread_timers[timer_id]);
+//         }
+//    }
 
     /* Return 0 to indicate success */
     return 0;
@@ -164,17 +170,20 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
         struct task_struct *pre_task = regs->di;
         struct task_struct *post_task = regs->si;
 
-        if(post_task->rt_priority == 10){ // this will be updated to check task policy or something else as task can have any priority
-                //printk(KERN_INFO "task context switching out\n");
-                if(__atomic_load_n(&modified_timer[pre_task->pid - parent_id], __ATOMIC_RELAXED)){
-                        // restart the timer
-                        if(timer_pending(thread_timers[post_task->pid - parent_id])){
-                                __atomic_store_n(&modified_timer[post_task->pid - parent_id],0,__ATOMIC_RELAXED);
-                                del_timer(thread_timers[post_task->pid - parent_id]);
-                                mod_timer(thread_timers[post_task->pid - parent_id], jiffies + msecs_to_jiffies(10000));
-                        }
-                }
-        }
+        // if(post_task->rt_priority == 10){ // this will be updated to check task policy or something else as task can have any priority
+        //         //printk(KERN_INFO "task context switching out\n");
+        //         int timer_id = (int) (post_task->pid - parent_id);
+        //         if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
+        //                 if(__atomic_load_n(&modified_timer[timer_id], __ATOMIC_RELAXED)){
+        //                         // restart the timer
+        //                         if(timer_pending(&thread_timers[timer_id])){
+        //                                 __atomic_store_n(&modified_timer[timer_id],0,__ATOMIC_RELAXED);
+        //                                 del_timer(&thread_timers[timer_id]);
+        //                                 mod_timer(&thread_timers[timer_id], jiffies + msecs_to_jiffies(10000));
+        //                         }
+        //                 }
+        //         }
+        // }
 
     /* Print a message to the kernel log */
    // pr_info("Post-handler: context_switch function intercepted!\n");
@@ -223,7 +232,7 @@ static int __init ttex_kernel_init(void)
     }
 
     /*Creating struct class*/
-    if(IS_ERR(dev_class = class_create(THIS_MODULE,"etx"))){
+    if(IS_ERR(dev_class = class_create(THIS_MODULE,"etx_class"))){
         pr_err("Cannot create the struct class\n");
         goto r_class;
     }
@@ -238,7 +247,10 @@ return 0;
  
 r_device:
         class_destroy(dev_class);
+        //unregister_chrdev_region(dev,1);
+        //return -1;
 r_class:
+        //class_destroy(dev_class);
         unregister_chrdev_region(dev,1);
         return -1;
 }
@@ -249,15 +261,20 @@ static void __exit ttex_kernel_exit(void)
     int ret;
 
     /* Unregister the kprobe */
+    device_destroy(dev_class,dev); // &dev kept giving kernel panics as device never got destryed
+    //class_unregister(dev_class);
+    class_destroy(dev_class);
+    cdev_del(&etx_cdev);
+    unregister_chrdev_region(dev, 1);
+
+//     ret = cdev_add(&etx_cdev, dev, 1);
+//     if (ret < 0) {
+//         pr_err("Failed to add character device\n");
+//         // 
+//         return ret;
+//     }
+
     unregister_kprobe(&kp);
-
-    ret = cdev_add(&etx_cdev, dev, 1);
-    if (ret < 0) {
-        pr_err("Failed to add character device\n");
-        unregister_chrdev_region(dev, 1);
-        return ret;
-    }
-
     pr_info("Kprobe unregistered\n");
 }
 
