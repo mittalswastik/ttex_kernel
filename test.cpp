@@ -34,15 +34,17 @@ int main(int argc, char** argv){
 
     // test(a);
 
-    #pragma omp parallel num_threads(4)
+    #pragma omp parallel num_threads(20)
     {
         int i, j = 0, a;
         
         #pragma omp for schedule(static)
-            for(i=0 ; i<20 ; i++){
-                for(int j=0 ; j<100 ; j++){
+            for(i=0 ; i<100 ; i++){
+                for(int j=0 ; j<1000 ; j++){
                     a = 2*i;
                 }
+
+                sleep(3);
 
                 ompt_test();
             }

@@ -109,6 +109,7 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         timer_id = (int) value-parent_id;
                         pr_info("timer id value is = %d\n", timer_id);
                         timer_setup(&thread_timers[timer_id], timer_callback, 0);
+                        mod_timer(&thread_timers[timer_id], jiffies + msecs_to_jiffies(10000));
                         pr_info("timer has been setup \n");
                         __atomic_store_n(&timer_set[timer_id],1,__ATOMIC_RELAXED);
                         pr_info("Timer Started\n");
@@ -146,17 +147,16 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs)
     struct task_struct *pre_task = regs->di;
     struct task_struct *post_task = regs->si;
 
-    /* Print a message to the kernel log */
-   // pr_info("Pre-handler: context_switch function intercepted!\n");
-
-//    if(pre_task->rt_priority == 10){
-//         int timer_id = (int) (pre_task->pid - parent_id);
-//         if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
-//                 __atomic_store_n(&timer_set[timer_id],0,__ATOMIC_RELAXED);
-//                 // store timers expiry time here
-//                 del_timer(&thread_timers[timer_id]);
-//         }
-//    }
+    if(pre_task->rt_priority == 10){
+        
+        int timer_id = (int) (pre_task->pid - parent_id);
+        if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
+                printk(KERN_INFO "task context switching out\n");
+                __atomic_store_n(&timer_set[timer_id],0,__ATOMIC_RELAXED);
+                // store timers expiry time here
+                del_timer(&thread_timers[timer_id]);
+        }
+   }
 
     /* Return 0 to indicate success */
     return 0;
@@ -170,20 +170,25 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
         struct task_struct *pre_task = regs->di;
         struct task_struct *post_task = regs->si;
 
-        // if(post_task->rt_priority == 10){ // this will be updated to check task policy or something else as task can have any priority
-        //         //printk(KERN_INFO "task context switching out\n");
-        //         int timer_id = (int) (post_task->pid - parent_id);
-        //         if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
-        //                 if(__atomic_load_n(&modified_timer[timer_id], __ATOMIC_RELAXED)){
-        //                         // restart the timer
-        //                         if(timer_pending(&thread_timers[timer_id])){
-        //                                 __atomic_store_n(&modified_timer[timer_id],0,__ATOMIC_RELAXED);
-        //                                 del_timer(&thread_timers[timer_id]);
-        //                                 mod_timer(&thread_timers[timer_id], jiffies + msecs_to_jiffies(10000));
-        //                         }
-        //                 }
-        //         }
+        // if(post_task->prio == 10){
+        //         printk(KERN_INFO "post context switch out priority\n");
         // }
+
+        if(post_task->rt_priority == 10){ // this will be updated to check task policy or something else as task can have any priority
+                printk(KERN_INFO "task context switching out\n");
+                int timer_id = (int) (post_task->pid - parent_id);
+                if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
+                        if(__atomic_load_n(&modified_timer[timer_id], __ATOMIC_RELAXED)){
+                                // restart the timer
+                                printk(KERN_INFO "task context switching in\n");
+                                if(timer_pending(&thread_timers[timer_id])){
+                                        __atomic_store_n(&modified_timer[timer_id],0,__ATOMIC_RELAXED);
+                                        del_timer(&thread_timers[timer_id]);
+                                        mod_timer(&thread_timers[timer_id], jiffies + msecs_to_jiffies(10000));
+                                }
+                        }
+                }
+        }
 
     /* Print a message to the kernel log */
    // pr_info("Post-handler: context_switch function intercepted!\n");
@@ -261,7 +266,7 @@ static void __exit ttex_kernel_exit(void)
     int ret;
 
     /* Unregister the kprobe */
-    device_destroy(dev_class,dev); // &dev kept giving kernel panics as device never got destryed
+    device_destroy(dev_class,dev); // &dev kept giving kernel panics as device never got destroyed
     //class_unregister(dev_class);
     class_destroy(dev_class);
     cdev_del(&etx_cdev);

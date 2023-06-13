@@ -136,11 +136,26 @@ extern "C" void
 ompt_test ()
 {
   printf("Recording an iteration\n");
+  struct sched_param param;
+  pthread_attr_t attr;
+  int policy;
   // get parallel id here
   ompt_data_t *current_thread = ompt_get_thread_data();
   thread_info* temp_thread_data = (thread_info*) current_thread->ptr;
 
+  pthread_attr_init(&attr);
+  pthread_t thread = pthread_self();
+  int result = pthread_getschedparam(thread,&policy,&param);
+  if (result != 0) {
+    printf("scheduling policy not retreived\n");
+  }
+
+  else {
+    printf("scheduling policy priority is : %d\n", param.sched_priority);
+  }
+
   int32_t id = syscall(__NR_gettid);
+  printf("scheduling cpu is %d for id %d\n: ", sched_getcpu(),id);
   printf("modification thread id: %d\n", temp_thread_data->id);
   ioctl(temp_thread_data->fd, MOD_TIMER, &id);
   printf("modification call made\n");
@@ -171,21 +186,37 @@ on_ompt_callback_thread_begin(
     pthread_t thread;
     pthread_attr_t attr;
     struct sched_param param;
+    int policy;
+
+    thread = pthread_self();
 
     // Initialize thread attributes
     pthread_attr_init(&attr);
 
+    int result = pthread_getschedparam(thread, &policy, &param);
+    if (result != 0) {
+      printf("scheduling policy not retreived\n");
+    }
+
+    else {
+      printf("scheduling policy priority is : %d\n", param.sched_priority); 
+    }
+
     // Set thread attributes to make it a real-time thread
-    pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
-    pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+    // pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    // 
 
     // Set the desired priority for the thread
     param.sched_priority = 10;
-    pthread_attr_setschedparam(&attr, &param);
+    policy = SCHED_FIFO;
+    //pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
+    pthread_setschedparam(thread, policy, &param); //pthread_attr_setschedparam is used before pthread_create
 
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(core_id, &cpuset);
+
+    pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
 
     thread_info* temp_thread_data = (thread_info*) malloc(sizeof(thread_info));
   
@@ -201,6 +232,7 @@ on_ompt_callback_thread_begin(
     thread_data->ptr = temp_thread_data;  // storing the thread data such that accessible to all events
 
     int32_t id = syscall(__NR_gettid);
+    printf("Thread id and core is %d & %d:\n", id, core_id);
 
     if(omp_get_thread_num() == 0){
       //printf("is this getting executed?\n");
