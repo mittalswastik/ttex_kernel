@@ -28,10 +28,16 @@ static ompt_get_thread_data_t ompt_get_thread_data;
 static ompt_get_unique_id_t ompt_get_unique_id;
 static ompt_enumerate_states_t ompt_enumerate_states;
 
+typedef struct modified_timer{
+        int32_t id;
+        unsigned long int time_val;
+} updated_timer;
+
 #define START_TIMER _IOW('S',2,int32_t*) // start the timer
 #define MOD_TIMER _IOW('U',3,int32_t*) // modify the timer
 #define DEL_TIMER _IOW('D',3,int32_t*) // delete the timer
 #define PARENT_ID _IOW('P',2,int32_t*) // start the timer
+#define MOD_TIMER_NEW _IOW('UT',3,updated_timer*)
 
 struct sigevent timer_event;
 typedef struct timespec timespec;
@@ -157,7 +163,10 @@ ompt_test ()
   int32_t id = syscall(__NR_gettid);
   printf("scheduling cpu is %d for id %d\n: ", sched_getcpu(),id);
   printf("modification thread id: %d\n", temp_thread_data->id);
-  ioctl(temp_thread_data->fd, MOD_TIMER, &id);
+  updated_timer test;
+  test.id = id;
+  test.time_val = 10000;
+  ioctl(temp_thread_data->fd, MOD_TIMER_NEW, &test);
   printf("modification call made\n");
 }
 

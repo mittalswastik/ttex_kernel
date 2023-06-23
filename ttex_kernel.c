@@ -16,10 +16,16 @@
 
 static struct kprobe kp;
 
+typedef struct modified_timer{
+        int32_t id;
+        unsigned long int time_val;
+} updated_timer;
+
 #define PARENT_ID _IOW('P',2,int32_t*) // start the timer
 #define START_TIMER _IOW('S',2,int32_t*) // start the timer
 #define MOD_TIMER _IOW('U',3,int32_t*) // modify the timer
 #define DEL_TIMER _IOW('D',3,int32_t*) // delete the timer
+#define MOD_TIMER_NEW _IOW('UT',3,updated_timer*)
 
 #define max_threads 50
 
@@ -52,6 +58,7 @@ static struct file_operations fops =
 
 struct timer_list thread_timers[max_threads];
 unsigned long pending_jiffies[max_threads];
+atomic_ulong mod_msecs[max_threads];
 atomic_bool timer_set[max_threads];
 atomic_bool modified_timer[max_threads];
 atomic_bool context_switch_started_timer[max_threads];
@@ -96,6 +103,7 @@ static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, 
 static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
          int timer_id;
+         updated_timer timer_test;
 
          switch(cmd) {
                 case PARENT_ID:
@@ -138,6 +146,12 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         __atomic_store_n(&timer_set[timer_id],0,__ATOMIC_RELAXED);
                         del_timer(&thread_timers[timer_id]);
                         break;
+                case MOD_TIMER_NEW:
+                        if(copy_from_user(&timer_test, (updated_timer*) arg, sizeof(timer_test))){
+                                pr_err("mod timer error\n");
+                        }
+                        __atomic_store_n(&mod_msecs[timer_test.id], timer_test.time_val ,__ATOMIC_RELAXED);
+                        break;
                 default:
                         pr_info("Default\n");
                         break;
@@ -156,8 +170,8 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs) // kprobe handler
     if(pre_task->rt_priority == 10){
         
         int timer_id = (int) (pre_task->pid - parent_id);
-        //if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
-        if(thread_timers[timer_id].function != NULL){
+        if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
+        //if(thread_timers[timer_id].function != NULL){
                 if(timer_pending(&thread_timers[timer_id])){
                         printk(KERN_INFO "task context switching out\n");
                         // __atomic_store_n(&timer_set[timer_id],0,__ATOMIC_RELAXED);
@@ -165,6 +179,7 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs) // kprobe handler
                         pending_jiffies[timer_id] = thread_timers[timer_id].expires - jiffies;
                         del_timer(&thread_timers[timer_id]);
                 }
+                printk(KERN_INFO "thread timer started at pre");
         }
    }
 
@@ -187,8 +202,8 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
         if(post_task->rt_priority == 10){ // this will be updated to check task policy or something else as task can have any priority
                 printk(KERN_INFO "task context switching out\n");
                 int timer_id = (int) (post_task->pid - parent_id);
-                //if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
-                if(thread_timers[timer_id].function != NULL) {
+                if(__atomic_load_n(&timer_set[timer_id], __ATOMIC_RELAXED)){
+                //if(thread_timers[timer_id].function != NULL) {
                         // if(!__atomic_load_n(&context_switch_started_timer[timer_id], __ATOMIC_RELAXED)){
                         //         // first need to start the timer
                         //         __atomic_store_n(&context_switch_started_timer[timer_id],1,__ATOMIC_RELAXED);
@@ -197,14 +212,14 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
                         //         // would have not started the timer hence need to start it outside of context switch
                         // }
 
-                        //else
-                        if(__atomic_load_n(&modified_timer[timer_id], __ATOMIC_RELAXED)){
+                        if(__atomic_load_n(&mod_msecs[timer_id], __ATOMIC_RELAXED) != 0){
                                 // restart the timer
                                 printk(KERN_INFO "task context switching in\n");
                                 if(timer_pending(&thread_timers[timer_id])){
-                                        __atomic_store_n(&modified_timer[timer_id],0,__ATOMIC_RELAXED);
+                                        //__atomic_store_n(&modified_timer[timer_id],0,__ATOMIC_RELAXED);
                                         del_timer(&thread_timers[timer_id]);
-                                        mod_timer(&thread_timers[timer_id], jiffies + msecs_to_jiffies(10000));
+                                        mod_timer(&thread_timers[timer_id], jiffies + msecs_to_jiffies(mod_msecs[timer_id]));
+                                        __atomic_store_n(&mod_msecs[timer_id], 0, __ATOMIC_RELAXED);
                                 }
                         }
 
@@ -214,6 +229,8 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
                                         mod_timer(&thread_timers[timer_id], jiffies + pending_jiffies[timer_id]);
                                 }
                         }
+
+                        printk(KERN_INFO "post callback");
                 }
         }
 
@@ -230,6 +247,7 @@ static int __init ttex_kernel_init(void)
         __atomic_store_n(&timer_set[i],0,__ATOMIC_RELAXED);
         __atomic_store_n(&modified_timer[i], 0, __ATOMIC_RELAXED);
         __atomic_store_n(&context_switch_started_timer[i], 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&mod_msecs[i], 0, __ATOMIC_RELAXED);
     }
 
     /* Initialize the kprobe structure */
