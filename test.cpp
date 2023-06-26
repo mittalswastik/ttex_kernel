@@ -4,7 +4,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include "profiler.h"
+#include "profiler_update.h"
 
 using namespace std;
 
