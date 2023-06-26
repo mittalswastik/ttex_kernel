@@ -15,6 +15,7 @@
 #include <linux/jiffies.h>
 
 static struct kprobe kp;
+static struct mutex map_lock;
 
 #define max_threads 50
 int32_t value = 0;
@@ -40,6 +41,7 @@ typedef struct map_node {
 
 typedef struct thread_map_struct {
    map_node* array[max_threads];
+   int arr_size;
 } thread_map_struct;
 
 int32_t hashFunction(int32_t key){
@@ -67,6 +69,7 @@ void insert(thread_map_struct* map, int key, thread_data val) {
 
     if (map->array[index] == NULL) {
         map->array[index] = newNode;
+        map->arr_size = map->arr_size + 1;
     } else {
         // Collision: append the newmap_node to the existing linked list
        map_node* curr = map->array[index];
@@ -80,7 +83,7 @@ void insert(thread_map_struct* map, int key, thread_data val) {
 // Function to retrieve the value associated with a given key from the hash map
 thread_data* get(thread_map_struct* map, int key) {
     int32_t index = hashFunction(key);
-   map_node* curr = map->array[index];
+    map_node* curr = map->array[index];
 
     while (curr != NULL) {
         if (curr->key == key) {
@@ -165,7 +168,8 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
          int timer_id;
          updated_timer timer_test;
-         thread_data *temp;
+         thread_data *temp_thread_data;
+         temp_thread_data = kmalloc(sizeof(thread_data), GFP_KERNEL);
 
          switch(cmd) {
                 case START_TIMER:
@@ -174,12 +178,16 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("Data Write : Err!\n");
                         }
                         pr_info("Start Timer = %d\n", value);
-                        timer_setup(&temp->thread_timer, timer_callback, 0);
-                        __atomic_store_n(&temp->timer_set, 1, __ATOMIC_RELAXED);
-                        __atomic_store_n(&temp->mod_timer, 0, __ATOMIC_RELAXED);
-                        __atomic_store_n(&temp->mod_msecs, 0, __ATOMIC_RELAXED);
-                        temp->pending_jiffies = 0;
-                        insert(thread_map, value, *temp);
+                        timer_setup(&(temp_thread_data->thread_timer), timer_callback, 0);
+                        __atomic_store_n(&(temp_thread_data->timer_set), 1, __ATOMIC_RELAXED);
+                        __atomic_store_n(&(temp_thread_data->mod_timer), 0, __ATOMIC_RELAXED);
+                        __atomic_store_n(&(temp_thread_data->mod_msecs), 0, __ATOMIC_RELAXED);
+                        temp_thread_data->pending_jiffies = 0;
+                        printk(KERN_INFO "Inserting a new timer node to the map\n");
+                        //mutex_lock(&map_lock);
+                        insert(thread_map, value, *temp_thread_data);
+                        printk(KERN_INFO "Inserted the timer node\n");
+                        //mutex_unlock(&map_lock);
                         pr_info("timer has been setup \n");
                         //mod_timer(&thread_timer[timer_id], jiffies + msecs_to_jiffies(10000));
                         pr_info("Timer Started\n");
@@ -189,12 +197,13 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         {
                                 pr_err("Data Read : Err!\n");
                         }
-                        temp = get(thread_map,value);
-                        if(temp == NULL) {
+
+                        temp_thread_data = get(thread_map,value); 
+                        if(temp_thread_data == NULL) {
                          pr_info("it should not be null as the timer has started");   
                         }
                         else {
-                            __atomic_store_n(&(temp->mod_timer), 1,__ATOMIC_RELAXED);
+                            __atomic_store_n(&(temp_thread_data->mod_timer), 1,__ATOMIC_RELAXED);
                         }
                         pr_info("modifying the timer for id %d\n", value);
                         break;
@@ -203,14 +212,14 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         {
                                 pr_err("Data Read : Err!\n");
                         }
-                        temp = get(thread_map,value);
-                        if(temp == NULL) {
+                        temp_thread_data = get(thread_map,value); 
+                        if(temp_thread_data == NULL) {
                          pr_info("it should not be null as the timer has started");   
                         }
-
                         else {
-                            del_timer(&(temp->thread_timer));
-                            __atomic_store_n(&(temp->timer_set), 0,__ATOMIC_RELAXED);
+                            del_timer(&(temp_thread_data->thread_timer));
+                            __atomic_store_n(&(temp_thread_data->timer_set), 0,__ATOMIC_RELAXED);
+                            // kfree the memory here if needed
                         }
                         break;
                 case MOD_TIMER_NEW:
@@ -218,12 +227,12 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("mod timer error\n");
                         }
                         printk(KERN_INFO "--------mod timer called with an updated time value------%d\n", timer_test.time_val);
-                        temp = get(thread_map,value);
-                        if(temp == NULL) {
+                        temp_thread_data = get(thread_map,value); 
+                        if(temp_thread_data == NULL) {
                          pr_info("it should not be null as the timer has started");   
                         }
                         else {
-                            __atomic_store_n(&(temp->mod_msecs), timer_test.time_val,__ATOMIC_RELAXED);
+                            __atomic_store_n(&(temp_thread_data->mod_msecs), timer_test.time_val,__ATOMIC_RELAXED);
                         }
                         printk(KERN_INFO "--------mod timer with time value------\n");
                         break;
@@ -243,19 +252,22 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs) // kprobe handler
     struct task_struct *post_task = regs->si;
 
     if(pre_task->rt_priority == 10){
-
-        thread_data *temp = get(thread_map,pre_task->pid);
-        if(pre_task->pid == NULL) {
-            pr_info("thread timer not yet formed");   
-        }
-        else {
-            if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
-                if(timer_pending(&(temp->thread_timer))){
-                    temp->pending_jiffies = temp->thread_timer.expires - jiffies;
-                    del_timer(&(temp->thread_timer));
+        //if(mutex_trylock(&map_lock) == 0){
+        if(thread_map->arr_size != 0){
+            thread_data *temp = get(thread_map,pre_task->pid);
+            if(temp == NULL) {
+                pr_info("thread timer not yet formed");   
+            }
+            else {
+                if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
+                    if(timer_pending(&(temp->thread_timer))){
+                        temp->pending_jiffies = temp->thread_timer.expires - jiffies;
+                        del_timer(&(temp->thread_timer));
+                    }
                 }
             }
         }
+        //}
    }
 
     /* Return 0 to indicate success */
@@ -275,22 +287,23 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
         // }
 
         if(pre_task->rt_priority == 10){
+            if(thread_map->arr_size != 0){
+                thread_data *temp = get(thread_map,pre_task->pid);
+                if(temp == NULL) {
+                    pr_info("thread timer not yet formed");   
+                }
+                else {
+                    if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
+                        if(timer_pending(&(temp->thread_timer))){
+                            if(__atomic_load_n(&(temp->mod_msecs), __ATOMIC_RELAXED) != 0){
+                                del_timer(&temp->thread_timer);
+                                mod_timer(&temp->thread_timer, jiffies + msecs_to_jiffies(temp->mod_msecs));
+                                __atomic_store_n(&temp->mod_msecs, 0, __ATOMIC_RELAXED);
+                            }
 
-            thread_data *temp = get(thread_map,pre_task->pid);
-            if(pre_task->pid == NULL) {
-                pr_info("thread timer not yet formed");   
-            }
-            else {
-                if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
-                    if(timer_pending(&(temp->thread_timer))){
-                        if(__atomic_load_n(&(temp->mod_msecs), __ATOMIC_RELAXED) != 0){
-                            del_timer(&temp->thread_timer);
-                            mod_timer(&temp->thread_timer, jiffies + msecs_to_jiffies(temp->mod_msecs));
-                            __atomic_store_n(&temp->mod_msecs, 0, __ATOMIC_RELAXED);
-                        }
-
-                        else {
-                            mod_timer(&temp->thread_timer, jiffies + temp->pending_jiffies);
+                            else {
+                                mod_timer(&temp->thread_timer, jiffies + temp->pending_jiffies);
+                            }
                         }
                     }
                 }
@@ -310,6 +323,10 @@ static int __init ttex_kernel_init(void)
     kp.pre_handler = pre_handler;
     kp.post_handler = post_handler;
     kp.addr = (kprobe_opcode_t *)kallsyms_lookup_name("__switch_to");
+    
+    mutex_init(&map_lock);
+    thread_map = kmalloc(sizeof(thread_map_struct), GFP_KERNEL);
+    thread_map->arr_size = 0;
 
     if (!kp.addr) {
         pr_err("Failed to find the address of context_switch function\n");
@@ -373,6 +390,7 @@ static void __exit ttex_kernel_exit(void)
     class_destroy(dev_class);
     cdev_del(&etx_cdev);
     unregister_chrdev_region(dev, 1);
+    mutex_destroy(&map_lock);
 
 //     ret = cdev_add(&etx_cdev, dev, 1);
 //     if (ret < 0) {
