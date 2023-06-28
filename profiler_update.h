@@ -28,6 +28,9 @@ static ompt_get_thread_data_t ompt_get_thread_data;
 static ompt_get_unique_id_t ompt_get_unique_id;
 static ompt_enumerate_states_t ompt_enumerate_states;
 
+int thread_priority = 10;
+unsigned long int time_val_msec = 10000;
+
 typedef struct modified_timer{
         int32_t id;
         unsigned long int time_val;
@@ -164,7 +167,7 @@ ompt_test ()
   printf("modification thread id: %d\n", temp_thread_data->id);
   updated_timer test;
   test.id = id;
-  test.time_val = 10000;
+  test.time_val = time_val_msec;
   ioctl(temp_thread_data->fd, MOD_TIMER_NEW, &test);
   printf("modification call made\n");
 }
@@ -215,7 +218,7 @@ on_ompt_callback_thread_begin(
     // 
 
     // Set the desired priority for the thread
-    param.sched_priority = 10;
+    param.sched_priority = thread_priority;
     policy = SCHED_FIFO;
     //pthread_attr_setschedpolicy(&attr, SCHED_FIFO);
     pthread_setschedparam(thread, policy, &param); //pthread_attr_setschedparam is used before pthread_create

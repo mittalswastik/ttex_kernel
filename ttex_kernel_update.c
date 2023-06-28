@@ -31,6 +31,7 @@ typedef struct thread_data {
     atomic_ulong mod_msecs;
     atomic_bool timer_set;
     atomic_bool mod_timer;
+    atomic_bool timer_triggered;
 } thread_data;
 
 typedef struct map_node {
@@ -129,6 +130,16 @@ static struct file_operations fops =
 
 void timer_callback(struct timer_list* data){
         printk(KERN_INFO "timer_callback\n");
+
+        // set timer triggered callback to false
+        int i;
+        for(i = 0; i < max_threads; i++) {
+            thread_data *temp = get(thread_map,i);
+            if(temp != NULL && data == &(temp->thread_timer)){
+                // there should exist an i for which this is true
+                __atomic_store_n(&(temp->timer_triggered), 1, __ATOMIC_RELAXED);
+            }
+        }
 }
 
 /*
@@ -182,6 +193,7 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         __atomic_store_n(&(temp_thread_data->timer_set), 1, __ATOMIC_RELAXED);
                         __atomic_store_n(&(temp_thread_data->mod_timer), 0, __ATOMIC_RELAXED);
                         __atomic_store_n(&(temp_thread_data->mod_msecs), 0, __ATOMIC_RELAXED);
+                        __atomic_store_n(&(temp_thread_data->timer_triggered), 0, __ATOMIC_RELAXED);
                         temp_thread_data->pending_jiffies = 0;
                         printk(KERN_INFO "Inserting a new timer node to the map\n");
                         //mutex_lock(&map_lock);
@@ -251,18 +263,23 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs) // kprobe handler
     struct task_struct *pre_task = regs->di;
     struct task_struct *post_task = regs->si;
 
-    if(pre_task->rt_priority == 10){
+    if(pre_task->rt_priority != 0){
         //if(mutex_trylock(&map_lock) == 0){
         if(thread_map->arr_size != 0){
             thread_data *temp = get(thread_map,pre_task->pid);
             if(temp == NULL) {
-                pr_info("thread timer not yet formed");   
+                //pr_info("thread timer not yet formed");   
             }
             else {
-                if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
-                    if(timer_pending(&(temp->thread_timer))){
+                pr_info("context switch pre handler\n");
+                //if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
+                if(temp->thread_timer.function != NULL){
+                    pr_info("pre handler timer set is already enabled\n");
+                    //if(timer_pending(&(temp->thread_timer))){
+                    if(!__atomic_load_n(&(temp->timer_triggered), __ATOMIC_RELAXED)){    
                         temp->pending_jiffies = temp->thread_timer.expires - jiffies;
                         del_timer(&(temp->thread_timer));
+                        pr_info("stopping the timer\n");
                     }
                 }
             }
@@ -286,23 +303,29 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
         //         printk(KERN_INFO "post context switch out priority\n");
         // }
 
-        if(pre_task->rt_priority == 10){
+        if(pre_task->rt_priority != 0){
             if(thread_map->arr_size != 0){
-                thread_data *temp = get(thread_map,pre_task->pid);
+                thread_data *temp = get(thread_map,post_task->pid);
                 if(temp == NULL) {
-                    pr_info("thread timer not yet formed");   
+                   // pr_info("thread timer not yet formed");   
                 }
                 else {
-                    if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
-                        if(timer_pending(&(temp->thread_timer))){
+                    pr_info("context switch post handler\n");
+                    //if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
+                      if(temp->thread_timer.function != NULL){
+                        pr_info("post handler timer set is already enabled\n");
+                        //if(timer_pending(&(temp->thread_timer))){
+                        if(!__atomic_load_n(&(temp->timer_triggered), __ATOMIC_RELAXED)){  
                             if(__atomic_load_n(&(temp->mod_msecs), __ATOMIC_RELAXED) != 0){
                                 del_timer(&temp->thread_timer);
                                 mod_timer(&temp->thread_timer, jiffies + msecs_to_jiffies(temp->mod_msecs));
                                 __atomic_store_n(&temp->mod_msecs, 0, __ATOMIC_RELAXED);
+                                printk(KERN_INFO "----- modified the timer -----\n");
                             }
 
                             else {
                                 mod_timer(&temp->thread_timer, jiffies + temp->pending_jiffies);
+                                printk(KERN_INFO "----- just update the timer ----\n");
                             }
                         }
                     }

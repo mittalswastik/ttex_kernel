@@ -8,6 +8,8 @@
 
 using namespace std;
 
+//int thread_priority = 0;
+
 void test(int b){
     int fd;
 
@@ -29,6 +31,11 @@ void test(int b){
 int main(int argc, char** argv){
 
     // int a;
+
+    if(argc == 3){
+        thread_priority = atoi(argv[1]);
+        time_val_msec = atoi(argv[2]);
+    }
 
     // cin>>a;
 

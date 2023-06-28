@@ -28,6 +28,8 @@ static ompt_get_thread_data_t ompt_get_thread_data;
 static ompt_get_unique_id_t ompt_get_unique_id;
 static ompt_enumerate_states_t ompt_enumerate_states;
 
+int thread_priority = 10;
+
 typedef struct modified_timer{
         int32_t id;
         unsigned long int time_val;
