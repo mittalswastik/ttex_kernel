@@ -32,6 +32,7 @@ typedef struct thread_data {
     atomic_bool timer_set;
     atomic_bool mod_timer;
     atomic_bool timer_triggered;
+    atomic_bool context_switch_start;
 } thread_data;
 
 typedef struct map_node {
@@ -189,20 +190,25 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("Data Write : Err!\n");
                         }
                         pr_info("Start Timer = %d\n", value);
-                        timer_setup(&(temp_thread_data->thread_timer), timer_callback, 0);
                         __atomic_store_n(&(temp_thread_data->timer_set), 1, __ATOMIC_RELAXED);
                         __atomic_store_n(&(temp_thread_data->mod_timer), 0, __ATOMIC_RELAXED);
                         __atomic_store_n(&(temp_thread_data->mod_msecs), 0, __ATOMIC_RELAXED);
+                        __atomic_store_n(&(temp_thread_data->context_switch_start), 0,__ATOMIC_RELAXED);
                         __atomic_store_n(&(temp_thread_data->timer_triggered), 0, __ATOMIC_RELAXED);
                         temp_thread_data->pending_jiffies = 0;
                         printk(KERN_INFO "Inserting a new timer node to the map\n");
                         //mutex_lock(&map_lock);
+                        timer_setup(&(temp_thread_data->thread_timer), timer_callback, 0);
                         insert(thread_map, value, *temp_thread_data);
                         printk(KERN_INFO "Inserted the timer node\n");
                         //mutex_unlock(&map_lock);
                         pr_info("timer has been setup \n");
                         //mod_timer(&thread_timer[timer_id], jiffies + msecs_to_jiffies(10000));
                         pr_info("Timer Started\n");
+                        if(__atomic_load_n(&temp_thread_data->context_switch_start, __ATOMIC_RELAXED)){
+                            schedule();
+                            __atomic_store_n(&(temp_thread_data->context_switch_start), 1,__ATOMIC_RELAXED); // it will be reset to 1 at schedule so reset after it
+                        }
                         break;
                 case MOD_TIMER:
                         if( copy_from_user(&value ,(int32_t*) arg, sizeof(value)) )
@@ -238,13 +244,19 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         if(copy_from_user(&timer_test, (updated_timer*) arg, sizeof(timer_test))){
                                 pr_err("mod timer error\n");
                         }
-                        printk(KERN_INFO "--------mod timer called with an updated time value------%d\n", timer_test.time_val);
+                        //printk(KERN_INFO "--------mod timer called with an updated time value------%d\n", timer_test.time_val);
                         temp_thread_data = get(thread_map,value); 
                         if(temp_thread_data == NULL) {
                          pr_info("it should not be null as the timer has started");   
                         }
+
                         else {
+                            //try with a sleep
                             __atomic_store_n(&(temp_thread_data->mod_msecs), timer_test.time_val,__ATOMIC_RELAXED);
+                            if(__atomic_load_n(&temp_thread_data->mod_msecs, __ATOMIC_RELAXED) != 0){ // context switch has not been triggered so we trigger it
+                                pr_info("context switch did not modify the timer\n");
+                                schedule();
+                            }
                         }
                         printk(KERN_INFO "--------mod timer with time value------\n");
                         break;
@@ -271,15 +283,15 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs) // kprobe handler
                 //pr_info("thread timer not yet formed");   
             }
             else {
-                pr_info("context switch pre handler\n");
-                //if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
-                if(temp->thread_timer.function != NULL){
-                    pr_info("pre handler timer set is already enabled\n");
+                //pr_info("context switch pre handler\n");
+                if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
+                //if(temp->thread_timer.function != NULL){
+                    //pr_info("pre handler timer set is already enabled\n");
                     //if(timer_pending(&(temp->thread_timer))){
                     if(!__atomic_load_n(&(temp->timer_triggered), __ATOMIC_RELAXED)){    
                         temp->pending_jiffies = temp->thread_timer.expires - jiffies;
                         del_timer(&(temp->thread_timer));
-                        pr_info("stopping the timer\n");
+                        //pr_info("stopping the timer\n");
                     }
                 }
             }
@@ -310,10 +322,10 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
                    // pr_info("thread timer not yet formed");   
                 }
                 else {
-                    pr_info("context switch post handler\n");
-                    //if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
-                      if(temp->thread_timer.function != NULL){
-                        pr_info("post handler timer set is already enabled\n");
+                    // pr_info("context switch post handler\n");
+                    if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
+                      //if(temp->thread_timer.function != NULL){
+                       // pr_info("post handler timer set is already enabled\n");
                         //if(timer_pending(&(temp->thread_timer))){
                         if(!__atomic_load_n(&(temp->timer_triggered), __ATOMIC_RELAXED)){  
                             if(__atomic_load_n(&(temp->mod_msecs), __ATOMIC_RELAXED) != 0){
@@ -325,9 +337,11 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
 
                             else {
                                 mod_timer(&temp->thread_timer, jiffies + temp->pending_jiffies);
-                                printk(KERN_INFO "----- just update the timer ----\n");
+                               // printk(KERN_INFO "----- just update the timer ----\n");
                             }
                         }
+
+                        __atomic_store_n(&temp->context_switch_start, 1, __ATOMIC_RELAXED);
                     }
                 }
             }
