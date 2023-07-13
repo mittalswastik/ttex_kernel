@@ -51,7 +51,7 @@ int main(int argc, char** argv){
                     a = 2*i;
                 }
 
-                sleep(3);
+                //sleep(3);
 
                 ompt_test();
             }
