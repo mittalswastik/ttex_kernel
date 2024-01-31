@@ -26,6 +26,11 @@ typedef struct modified_timer{
         unsigned long int time_val;
 } updated_timer;
 
+typedef struct receive_timer {
+    unsigned long int time_val_to_sub;
+    unsigned long int time_val;
+} receive_timer;
+
 typedef struct thread_data {
     struct timer_list thread_timer;
     unsigned long pending_jiffies;
@@ -51,7 +56,6 @@ int32_t hashFunction(int32_t key){
     return key % max_threads;
 }
 
-
 // Function to create a new node
 map_node* createNode(int key, thread_data val) {
     struct map_node* newNode = kmalloc(sizeof(map_node), GFP_KERNEL);
@@ -75,7 +79,7 @@ void insert(thread_map_struct* map, int key, thread_data val) {
         map->arr_size = map->arr_size + 1;
     } else {
         // Collision: append the newmap_node to the existing linked list
-       map_node* curr = map->array[index];
+        map_node* curr = map->array[index];
         while (curr->next != NULL) {
             curr = curr->next;
         }
@@ -105,6 +109,7 @@ thread_map_struct *thread_map;
 #define MOD_TIMER _IOW('U',3,int32_t*) // modify the timer
 #define DEL_TIMER _IOW('D',3,int32_t*) // delete the timer
 #define MOD_TIMER_NEW _IOW('UT',3,updated_timer*)
+#define GET_TIMER _IOWR('R',3, receive_timer*) //
  
 dev_t dev;
 static struct class *dev_class;
@@ -180,7 +185,9 @@ static ssize_t etx_write(struct file *filp, const char __user *buf, size_t len, 
 static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
          int timer_id;
+         unsigned long int get_kern_time;
          updated_timer timer_test;
+         receive_timer timer_return;
          thread_data *temp_thread_data;
          temp_thread_data = kmalloc(sizeof(thread_data), GFP_KERNEL);
 
@@ -246,7 +253,7 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("mod timer error\n");
                         }
                         printk(KERN_INFO "--------mod timer called with an updated time value------%d\n", timer_test.time_val);
-                        temp_thread_data = get(thread_map,value); 
+                        temp_thread_data = get(thread_map,timer_test.id); 
                         if(temp_thread_data == NULL) {
                          pr_info("it should not be null as the timer has started");   
                         }
@@ -263,6 +270,17 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                             pr_info("----------------------- checking for context switch ############### %d\n", task_cpu(current));
                         }
                         //printk(KERN_INFO "--------mod timer with time value------\n");
+                        break;
+                case GET_TIMER:
+                        if(copy_from_user(&timer_return, (receive_timer*) arg, sizeof(timer_return))){
+                                pr_err("mod timer error\n");
+                        }
+                        get_kern_time = ktime_get_ns()-timer_return.time_val_to_sub;
+                        __atomic_store_n(&(timer_return.time_val), get_kern_time, __ATOMIC_RELAXED);
+                        if( copy_to_user((receive_timer*) arg, &timer_return, sizeof(timer_return)))
+                        {
+                                pr_err("Data Sent : Err!\n");
+                        }
                         break;
                 default:
                         pr_info("Default\n");
@@ -286,13 +304,14 @@ static int pre_handler(struct kprobe *p, struct pt_regs *regs) // kprobe handler
             if(temp == NULL) {
                 //pr_info("thread timer not yet formed");   
             }
+            
             else {
                 //pr_info("context switch pre handler\n");
                 if(__atomic_load_n(&(temp->timer_set), __ATOMIC_RELAXED)){
                 //if(temp->thread_timer.function != NULL){
                     //pr_info("pre handler timer set is already enabled\n");
                     //if(timer_pending(&(temp->thread_timer))){
-                    if(!__atomic_load_n(&(temp->timer_triggered), __ATOMIC_RELAXED)){    
+                    if(!__atomic_load_n(&(temp->timer_triggered), __ATOMIC_RELAXED)){  
                         temp->pending_jiffies = temp->thread_timer.expires - jiffies;
                         del_timer(&(temp->thread_timer));
                         //pr_info("stopping the timer\n");
