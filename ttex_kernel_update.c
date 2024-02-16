@@ -252,7 +252,7 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         if(copy_from_user(&timer_test, (updated_timer*) arg, sizeof(timer_test))){
                                 pr_err("mod timer error\n");
                         }
-                        printk(KERN_INFO "--------mod timer called with an updated time value------%d\n", timer_test.time_val);
+                       // printk(KERN_INFO "--------mod timer called with an updated time value------%d\n", timer_test.time_val);
                         temp_thread_data = get(thread_map,timer_test.id); 
                         if(temp_thread_data == NULL) {
                          pr_info("it should not be null as the timer has started");   
@@ -262,12 +262,12 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                             //try with a sleep
                             __atomic_store_n(&(temp_thread_data->mod_msecs), timer_test.time_val,__ATOMIC_RELAXED);
                             if(__atomic_load_n(&temp_thread_data->mod_msecs, __ATOMIC_RELAXED) != 0){ // context switch has not been triggered so we trigger it
-                                pr_info("---------- context switch did not modify the timer ############ %d\n", task_cpu(current));
+                                //pr_info("---------- context switch did not modify the timer ############ %d\n", task_cpu(current));
                                 schedule();
                                 //msleep(3000);
                             }
 
-                            pr_info("----------------------- checking for context switch ############### %d\n", task_cpu(current));
+                           // pr_info("----------------------- checking for context switch ############### %d\n", task_cpu(current));
                         }
                         //printk(KERN_INFO "--------mod timer with time value------\n");
                         break;
@@ -355,7 +355,7 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
                                 del_timer(&temp->thread_timer);
                                 mod_timer(&temp->thread_timer, jiffies + msecs_to_jiffies(temp->mod_msecs));
                                 __atomic_store_n(&temp->mod_msecs, 0, __ATOMIC_RELAXED);
-                                printk(KERN_INFO "----- modified the timer ----- %d\n", task_cpu(post_task));
+                                //printk(KERN_INFO "----- modified the timer ----- %d\n", task_cpu(post_task));
                             }
 
                             else {

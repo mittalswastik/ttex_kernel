@@ -1,0 +1,26 @@
+reset
+
+set terminal svg enhanced background rgb 'white'
+
+set style fill solid 0.5 border -1
+set style boxplot outliers pointtype 0
+#set style boxplot outliers pointtype 2 pointsize 0.5
+set style data boxplot
+set boxwidth  0.5
+set pointsize 0.1
+
+unset key
+set border 2
+set xtics ("1" 1, "2" 2) scale 0.0
+#, "3" 3, "4" 4, "5" 5, "6" 6, "7" 7) scale 0.0
+set xtics nomirror
+set ytics 200
+set yrange [500:5000]
+set title "Execution time of user to kernel"
+set ylabel "Execution time in ns"
+set xlabel "1: subtract time in kernel 2: send kernel time"
+
+set output "user_to_kernel_time.svg"
+
+plot 'sample' using (1):1, '' using (2):2
+#, '' using (3):3, '' using (4):4, '' using (5):5, '' using (6):6
