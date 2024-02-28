@@ -27,6 +27,7 @@ typedef struct modified_timer{
 } updated_timer;
 
 typedef struct receive_timer {
+    int32_t id;
     unsigned long int time_val_to_sub;
     unsigned long int time_val;
 } receive_timer;
@@ -34,6 +35,7 @@ typedef struct receive_timer {
 typedef struct thread_data {
     struct timer_list thread_timer;
     unsigned long pending_jiffies;
+    unsigned long paused_jiffies;
     atomic_ulong mod_msecs;
     atomic_bool timer_set;
     atomic_bool mod_timer;
@@ -189,7 +191,7 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
          updated_timer timer_test;
          receive_timer timer_return;
          thread_data *temp_thread_data;
-         temp_thread_data = kmalloc(sizeof(thread_data), GFP_KERNEL);
+         //temp_thread_data = kmalloc(sizeof(thread_data), GFP_KERNEL);
 
          switch(cmd) {
                 case START_TIMER:
@@ -198,6 +200,8 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                                 pr_err("Data Write : Err!\n");
                         }
                         pr_info("Start Timer = %d\n", value);
+			//thread_data *temp_thread_data;
+			temp_thread_data=kmalloc(sizeof(thread_data),GFP_KERNEL);
                         __atomic_store_n(&(temp_thread_data->timer_set), 1, __ATOMIC_RELAXED);
                         __atomic_store_n(&(temp_thread_data->mod_timer), 0, __ATOMIC_RELAXED);
                         __atomic_store_n(&(temp_thread_data->mod_msecs), 0, __ATOMIC_RELAXED);
@@ -275,12 +279,20 @@ static long etx_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         if(copy_from_user(&timer_return, (receive_timer*) arg, sizeof(timer_return))){
                                 pr_err("mod timer error\n");
                         }
-                        get_kern_time = ktime_get_ns()-timer_return.time_val_to_sub;
-                        __atomic_store_n(&(timer_return.time_val), get_kern_time, __ATOMIC_RELAXED);
-                        if( copy_to_user((receive_timer*) arg, &timer_return, sizeof(timer_return)))
-                        {
-                                pr_err("Data Sent : Err!\n");
+                        temp_thread_data = get(thread_map,timer_return.id);
+                        if(temp_thread_data == NULL){
+                            pr_info("it should not be NULL here\n");
                         }
+                        
+                        else {
+                            get_kern_time = ktime_get_ns()-timer_return.time_val_to_sub-jiffies_to_ns(temp_thread_data->paused_jiffies);
+                            __atomic_store_n(&(timer_return.time_val), get_kern_time, __ATOMIC_RELAXED);
+                            if( copy_to_user((receive_timer*) arg, &timer_return, sizeof(timer_return)))
+                            {
+                                    pr_err("Data Sent : Err!\n");
+                            }
+                        }
+
                         break;
                 default:
                         pr_info("Default\n");
@@ -334,9 +346,9 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
         struct task_struct *pre_task = regs->di;
         struct task_struct *post_task = regs->si;
 
-        // if(post_task->prio == 10){
-        //         printk(KERN_INFO "post context switch out priority\n");
-        // }
+        if(post_task->prio == 10){
+                printk(KERN_INFO "post context switch out priority\n");
+        }
 
         if(pre_task->rt_priority != 0){
             if(thread_map->arr_size != 0){
@@ -360,6 +372,7 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
 
                             else {
                                 mod_timer(&temp->thread_timer, jiffies + temp->pending_jiffies);
+                                temp->paused_jiffies += temp->pending_jiffies;
                                // printk(KERN_INFO "----- just update the timer ----\n");
                             }
                         
