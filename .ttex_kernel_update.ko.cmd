@@ -1,1 +1,0 @@
-cmd_/home/swastik/dev/ttex/kernel_impl/ttex_kernel_update.ko := ld -r -m elf_x86_64  -z max-page-size=0x200000 -z noexecstack   --build-id  -T ./scripts/module-common.lds -o /home/swastik/dev/ttex/kernel_impl/ttex_kernel_update.ko /home/swastik/dev/ttex/kernel_impl/ttex_kernel_update.o /home/swastik/dev/ttex/kernel_impl/ttex_kernel_update.mod.o;  true
