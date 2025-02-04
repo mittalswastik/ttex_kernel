@@ -1,4 +1,6 @@
-## T-tex Kernel Implementation
+## T-Tex Kernel Implementation
+* We utilize linux ioctl calls to communicate between OpenMP runtime and the kernel module
+* Kprobe handlers are used to probe into linux context-switch function
 
 ### Compile
 run ``make clean`` \
