@@ -3,6 +3,9 @@
 * Kprobe handlers are used to probe into linux context-switch function
 
 ### Compile
+
+``git clone https://github.com/mittalswastik/ttex_kernel`` \
+
 run ``make clean`` \
 ``make``
 
