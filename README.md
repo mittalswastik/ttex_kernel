@@ -4,7 +4,7 @@
 
 ### Compile
 
-``git clone https://github.com/mittalswastik/ttex_kernel``
+``git clone https://github.com/mittalswastik/ttex_kernel`` \
 ``sudo apt install linux-headers-$(uname -r)``
 
 run ``make clean`` \
